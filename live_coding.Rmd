@@ -5,5 +5,140 @@ output: html_notebook
 
 ```{r}
 library(tidyverse)
+
+ouedkniss <- read_csv("ouedkniss.csv")
+lkeria <- read_csv("lkeria.csv")
 ```
+
+```{r}
+ouedkniss_light <- ouedkniss %>% 
+  janitor::clean_names() %>% 
+  select(nb_floor, nb_room, area, price_value_dzd, announcer_type, month, municipality, garage, garden, furnished,
+         promise, new_project)
+```
+
+```{r}
+glimpse(ouedkniss_light)
+```
+
+```{r}
+skimr::skim(ouedkniss_light)
+```
+
+### Univariate
+
+```{r}
+p1 <- ouedkniss_light %>% 
+  ggplot(aes(x = price_value_dzd)) +
+  geom_histogram(binwidth = 1e6, fill = "navy", color = "white") +
+  scale_x_continuous(labels = scales::comma_format()) +
+  labs(title = "Listings prices distribution in Algiers", x = "Price[DZD]", y = "# of Listings",
+       caption = "Source: www.ouedkniss.com") +
+  theme_minimal()
+
+p2 <- ouedkniss_light %>% 
+  filter(area <= 200) %>% 
+  ggplot(aes(x = area)) +
+  geom_histogram(fill = "darkred", color = "white") +
+  # scale_x_continuous(labels = scales::comma_format()) +
+  labs(title = "Listings area distribution in Algiers", x = "Area[m^2]", y = "# of Listings",
+       caption = "Source: www.ouedkniss.com") +
+  theme_minimal()
+
+library(patchwork)
+
+p1 + p2
+```
+
+```{r}
+quantile(ouedkniss_light$price_value_dzd, probs = seq(0.9, 1, 0.01))
+```
+```{r}
+ouedkniss_light %>% 
+  mutate(nb_floor = ifelse(nb_floor>=6, "6+", as.character(nb_floor))) %>% 
+  count(nb_floor) %>% 
+  mutate(pct = n/sum(n)) %>% 
+  ggplot(aes(x = nb_floor, y = n, fill = nb_floor)) +
+  geom_col(show.legend = F) +
+  geom_label(aes(label = str_c(round(pct*100, 1), "%")), fill = "white") +
+  scale_fill_viridis_d(na.value = "grey70") +
+  theme_classic()
+    
+
+ouedkniss_light %>% 
+  mutate(nb_room = factor(nb_room)) %>% 
+  # mutate(nb_floor = ifelse(nb_floor>=6, "6+", as.character(nb_floor))) %>% 
+  count(nb_room) %>% 
+  mutate(pct = n/sum(n)) %>% 
+  ggplot(aes(x = nb_room, y = n, fill = nb_room)) +
+  geom_col(show.legend = F) +
+  geom_label(aes(label = str_c(round(pct*100, 1), "%")), fill = "white") +
+  scale_fill_viridis_d(na.value = "grey70", option = "inferno") +
+  theme_classic() 
+
+ouedkniss_light %>% 
+  mutate(month = fct_relevel(month, month.abb)) %>% 
+  # mutate(nb_room = factor(nb_room)) %>% 
+  # mutate(nb_floor = ifelse(nb_floor>=6, "6+", as.character(nb_floor))) %>% 
+  count(month) %>% 
+  mutate(pct = n/sum(n)) %>% 
+  ggplot(aes(x = month, y = n, fill = month)) +
+  geom_col(show.legend = F) +
+  geom_label(aes(label = str_c(round(pct*100, 1), "%")), fill = "white") +
+  scale_fill_viridis_d(na.value = "grey70", option = "inferno") +
+  theme_classic() 
+```
+
+### Multivariate (vs. Price)
+
+```{r}
+ouedkniss_light %>% 
+  filter(price_value_dzd <= 4.7e7) %>% 
+  ggplot(aes(announcer_type, price_value_dzd, fill = announcer_type)) +
+  geom_boxplot(show.legend = FALSE) +
+  theme_classic()
+```
+```{r}
+ouedkniss_light %>% 
+  add_count(municipality) %>% 
+  # group_by(municipality) %>% 
+  # mutate(n = n()) %>% 
+  # ungroup()
+  filter(price_value_dzd <= 4.7e7) %>% 
+  mutate(municipality = fct_reorder(municipality, price_value_dzd, .fun = median)) %>% 
+  ggplot(aes(municipality, price_value_dzd, fill = municipality)) +
+  geom_boxplot(show.legend = F) +
+  scale_fill_viridis_d(option = "inferno") +
+  theme_classic() +
+  geom_text(aes(x = municipality, y = 5e7, label = n), inherit.aes = FALSE, size = 2) +
+  coord_flip() +
+  theme(axis.text = element_text(size = 6))
+```
+
+```{r}
+library(tidymodels)
+
+set.seed(123)
+data_split <- initial_split(ouedkniss_light)
+
+train <- training(data_split)
+test <- testing(data_split)
+
+lm_rec <- recipe(price_value_dzd ~ ., data = train) %>% 
+  step_filter(area <= 200, price_value_dzd <= 4.7e7) %>% 
+  step_rm(month, new_project) %>% 
+  step_mutate_at(garage, garden, furnished, promise, fn = ~ifelse(is.na(.), FALSE, .)) %>% 
+  step_mutate(nb_floor = case_when(between(nb_floor, 1, 5) ~ as.character(nb_floor),
+                                   nb_floor >= 6 ~ "6+",
+                                   is.na(nb_floor) ~ "0")) %>% 
+  step_mutate_at(nb_floor, nb_room, announcer_type, fn = factor) %>% 
+  step_dummy(municipality) %>% 
+  prep()
+
+juice(lm_rec)
+
+bake(lm_rec, new_data = train)
+```
+
+
 
